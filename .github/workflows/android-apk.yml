@@ -1,0 +1,173 @@
+name: Build BloxTacos Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master]
+    tags: ["v*"]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bloxtacos-android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: 4.7.2
+  GODOT_RELEASE_TAG: 4.7.2-stable
+  GODOT_TEMPLATE_VERSION: 4.7.2.stable
+
+jobs:
+  build-android:
+    name: Export Android ARM64 APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v7
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK for Godot 4.7.x
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.1 cmdline-tools;latest ndk;28.1.13356709 cmake;3.10.2.4988404"
+
+      - name: Normalize Android SDK environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$SDK_ROOT"
+          test -d "$SDK_ROOT/platform-tools"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "Android SDK: $SDK_ROOT"
+
+      - name: Download Godot editor and matching export templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          GODOT_DIR="$RUNNER_TEMP/godot"
+          TEMPLATE_DIR="$HOME/.local/share/godot/export_templates/$GODOT_TEMPLATE_VERSION"
+          mkdir -p "$GODOT_DIR/editor" "$GODOT_DIR/templates" "$TEMPLATE_DIR"
+
+          curl --fail --location --retry 3 \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_RELEASE_TAG}/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" \
+            --output "$GODOT_DIR/godot.zip"
+          unzip -q "$GODOT_DIR/godot.zip" -d "$GODOT_DIR/editor"
+          GODOT_BIN="$(find "$GODOT_DIR/editor" -maxdepth 3 -type f -name 'Godot_v*_linux.x86_64' -print -quit)"
+          test -n "$GODOT_BIN"
+          chmod +x "$GODOT_BIN"
+          sudo install -m 0755 "$GODOT_BIN" /usr/local/bin/godot
+
+          curl --fail --location --retry 3 \
+            "https://github.com/godotengine/godot/releases/download/${GODOT_RELEASE_TAG}/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" \
+            --output "$GODOT_DIR/export_templates.tpz"
+          unzip -q "$GODOT_DIR/export_templates.tpz" -d "$GODOT_DIR/templates"
+          DEBUG_TEMPLATE="$(find "$GODOT_DIR/templates" -type f -name android_debug.apk -print -quit)"
+          RELEASE_TEMPLATE="$(find "$GODOT_DIR/templates" -type f -name android_release.apk -print -quit)"
+          test -n "$DEBUG_TEMPLATE"
+          test -n "$RELEASE_TEMPLATE"
+          TEMPLATE_SOURCE="$(dirname "$DEBUG_TEMPLATE")"
+          test "$(dirname "$RELEASE_TEMPLATE")" = "$TEMPLATE_SOURCE"
+          cp -a "$TEMPLATE_SOURCE/." "$TEMPLATE_DIR/"
+          printf '%s\n' "$GODOT_TEMPLATE_VERSION" > "$TEMPLATE_DIR/version.txt"
+
+          test -s "$TEMPLATE_DIR/android_debug.apk"
+          test -s "$TEMPLATE_DIR/android_release.apk"
+          test "$(cat "$TEMPLATE_DIR/version.txt")" = "$GODOT_TEMPLATE_VERSION"
+          # Prebuilt APK templates are used. .build_version belongs to a project-local
+          # Gradle build template and is intentionally not needed with use_gradle_build=false.
+          godot --headless --version | tee "$RUNNER_TEMP/godot/version.log"
+          grep -F "$GODOT_VERSION.stable" "$RUNNER_TEMP/godot/version.log"
+          echo "Installed templates:"
+          find "$TEMPLATE_DIR" -maxdepth 1 -type f -printf '%f (%s bytes)\n' | sort
+
+      - name: Validate Android export configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'gradle_build/use_gradle_build=false' export_presets.cfg
+          grep -F 'gradle_build/min_sdk=""' export_presets.cfg
+          grep -F 'gradle_build/target_sdk=""' export_presets.cfg
+          grep -F 'architectures/arm64-v8a=true' export_presets.cfg
+          grep -F 'permissions/internet=true' export_presets.cfg
+          grep -F 'window/handheld/orientation=6' project.godot
+          if grep -F 'gradle_build/use_gradle_build=true' export_presets.cfg; then
+            echo "This workflow expects the prebuilt APK templates, not a Gradle source template." >&2
+            exit 1
+          fi
+
+      - name: Configure Android SDK and debug signing key
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/godot" "$HOME/.android"
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}"
+          test -n "$SDK_ROOT"
+          test -d "$SDK_ROOT/platforms/android-35"
+          test -d "$SDK_ROOT/build-tools/35.0.1"
+          test -d "$SDK_ROOT/ndk/28.1.13356709"
+          if [[ ! -f "$HOME/.android/debug.keystore" ]]; then
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/debug.keystore" \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+          cat > "$HOME/.config/godot/editor_settings-4.tres" <<SETTINGS
+          [gd_resource type="EditorSettings" format=3]
+
+          [resource]
+          export/android/android_sdk_path = "${SDK_ROOT}"
+          export/android/java_sdk_path = "${JAVA_HOME}"
+          export/android/debug_keystore = "${HOME}/.android/debug.keystore"
+          export/android/debug_keystore_user = "androiddebugkey"
+          export/android/debug_keystore_pass = "android"
+          SETTINGS
+
+      - name: Import project resources
+        run: godot --headless --editor --path . --import --quit
+
+      - name: Parse scripts and load project
+        run: godot --headless --editor --path . --quit
+
+      - name: Smoke test main scene
+        run: godot --headless --path . --quit-after 20
+
+      - name: Export debug APK (ARM64)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build
+          GODOT_ANDROID_KEYSTORE_DEBUG_PATH="$HOME/.android/debug.keystore" \
+          GODOT_ANDROID_KEYSTORE_DEBUG_USER="androiddebugkey" \
+          GODOT_ANDROID_KEYSTORE_DEBUG_PASSWORD="android" \
+          godot --headless --path . --export-debug "Android ARM64" build/BloxTacos.apk
+          test -s build/BloxTacos.apk
+          unzip -t build/BloxTacos.apk >/dev/null
+          "$ANDROID_SDK_ROOT/build-tools/35.0.1/apksigner" verify --verbose build/BloxTacos.apk
+          "$ANDROID_SDK_ROOT/build-tools/35.0.1/aapt" dump badging build/BloxTacos.apk > "$RUNNER_TEMP/badging.txt"
+          grep -F "package: name='com.bloxtacos.classic'" "$RUNNER_TEMP/badging.txt"
+          grep -F "sdkVersion:'24'" "$RUNNER_TEMP/badging.txt"
+          grep -F "targetSdkVersion:'36'" "$RUNNER_TEMP/badging.txt"
+          "$ANDROID_SDK_ROOT/build-tools/35.0.1/aapt" dump permissions build/BloxTacos.apk | grep -F 'android.permission.INTERNET'
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: BloxTacos-Android-APK-ARM64
+          path: build/BloxTacos.apk
+          if-no-files-found: error
+          retention-days: 30
