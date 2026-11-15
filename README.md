@@ -69,3 +69,10 @@ No GitHub, abra **Actions → Build BloxTacos Android APK → Run workflow**. O 
 ## Licenças e assets
 
 Os modelos de acessórios `assets/catalog/models/*.glb` foram modelados originalmente para este projeto e ficam cobertos pela licença MIT da raiz. O script de geração está em `tools/generate_catalog_accessories.py`; ele é uma ferramenta de autoria e não é executado pelo jogo. O `THIRD_PARTY_NOTICES.md` lista os dois avatares GLB originais e as licenças indicadas nos próprios metadados. `ASSET_RESEARCH.md` lista referências CC0 pesquisadas, mas não redistribuídas nesta versão.
+
+
+## Build Android 0.6.1
+
+O importador de texturas ETC2/ASTC está habilitado em `project.godot`. O GitHub Actions apaga o cache de importação antes de reimportar recursos, corrige a animação de boot sem Tween infinito e exporta o APK ARM64 sem instalar em dispositivo ou emulador. Consulte `ANDROID_BUILD_NOTES.md`.
+
+O preset Android está como não-runnable (`runnable=false`) para impedir que o editor procure aparelhos conectados durante uma simples exportação de APK. O workflow também desativa `export/android/shutdown_adb_on_exit`.

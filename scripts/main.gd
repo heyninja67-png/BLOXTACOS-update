@@ -20,6 +20,7 @@ var _world_root: Node3D
 var _loading_layer: CanvasLayer
 var _loading_overlay: Control
 var _loading_bar: ProgressBar
+var _loading_logo: TextureRect
 var _loading_status_label: Label
 var _loading_paths: Array[String] = []
 var _loading_finished: Dictionary = {}
@@ -115,6 +116,9 @@ func _ready() -> void:
 	_begin_startup_loading()
 
 func _process(delta: float) -> void:
+	# Animate the boot logo without an infinite Tween. This is deterministic in headless smoke tests.
+	if is_instance_valid(_loading_logo):
+		_loading_logo.rotation = sin(float(Time.get_ticks_msec()) * 0.0014) * 0.035
 	if not _startup_ready:
 		_update_startup_loading()
 		return
@@ -197,6 +201,7 @@ func _build_loading_screen() -> void:
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	logo.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	stack.add_child(logo)
+	_loading_logo = logo
 	var title := Label.new()
 	title.text = "BloxTacos"
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -222,9 +227,6 @@ func _build_loading_screen() -> void:
 	footer.add_theme_font_size_override("font_size", 10)
 	footer.add_theme_color_override("font_color", Color("#a8c9df"))
 	stack.add_child(footer)
-	var tween := create_tween().set_loops()
-	tween.tween_property(logo, "rotation", 0.06, 0.75)
-	tween.tween_property(logo, "rotation", -0.06, 0.75)
 
 func _begin_startup_loading() -> void:
 	_loading_paths = ["res://assets/avatars/noob_r6.glb", "res://assets/avatars/bacon_hair.glb"]
@@ -281,6 +283,7 @@ func _finish_startup() -> void:
 		_loading_layer.queue_free()
 	_loading_layer = null
 	_loading_overlay = null
+	_loading_logo = null
 	print("BloxTacos pronto: recursos carregados, avatares GLB e experiências locais.")
 
 func _apply_screen_orientation(in_game: bool) -> void:

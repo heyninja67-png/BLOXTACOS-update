@@ -99,8 +99,10 @@ jobs:
           grep -F 'gradle_build/use_gradle_build=false' export_presets.cfg
           grep -F 'gradle_build/min_sdk=""' export_presets.cfg
           grep -F 'gradle_build/target_sdk=""' export_presets.cfg
+          grep -F 'runnable=false' export_presets.cfg
           grep -F 'architectures/arm64-v8a=true' export_presets.cfg
           grep -F 'permissions/internet=true' export_presets.cfg
+          grep -F 'textures/vram_compression/import_etc2_astc=true' project.godot
           grep -F 'window/handheld/orientation=6' project.godot
           if grep -F 'gradle_build/use_gradle_build=true' export_presets.cfg; then
             echo "This workflow expects the prebuilt APK templates, not a Gradle source template." >&2
@@ -135,16 +137,33 @@ jobs:
           export/android/debug_keystore = "${HOME}/.android/debug.keystore"
           export/android/debug_keystore_user = "androiddebugkey"
           export/android/debug_keystore_pass = "android"
+          export/android/shutdown_adb_on_exit = false
           SETTINGS
 
-      - name: Import project resources
-        run: godot --headless --editor --path . --import --quit
+      - name: Import project resources (fresh ETC2/ASTC cache)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Texture import settings do not retroactively change existing imported files.
+          rm -rf .godot/imported
+          godot --headless --editor --path . --import --quit
+          test -d .godot/imported
 
       - name: Parse scripts and load project
         run: godot --headless --editor --path . --quit
 
       - name: Smoke test main scene
         run: godot --headless --path . --quit-after 20
+
+      - name: Assert no device/emulator install step is configured
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -nE '(^|[[:space:]])adb[[:space:]]+(install|shell|push|pull|devices)' .github/workflows/android-apk.yml; then
+            echo 'The APK workflow must not depend on a connected Android device or emulator.' >&2
+            exit 1
+          fi
+          echo 'APK export is offline from Android devices; no ADB install or emulator is used.'
 
       - name: Export debug APK (ARM64)
         shell: bash

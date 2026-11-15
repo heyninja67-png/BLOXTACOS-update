@@ -54,3 +54,19 @@ The Android export preset now explicitly sets `permissions/internet=true`, becau
 ## Projeto 0.6.0 e rede Android
 
 A versão do aplicativo foi atualizada para `0.6.0` (version code `6`). O preset declara `permissions/internet=true`; o workflow verifica essa configuração e também consulta o manifesto do APK com `aapt dump permissions`. Isso é necessário para os sockets ENet/UDP funcionarem no Android.
+
+
+## Correções após a primeira execução do GitHub Actions (v0.6.1)
+
+A primeira execução reportou `ETC2/ASTC texture compression is required for Android export`. O projeto usa Compatibility / GL Compatibility, mas o exportador Android ainda exige que os recursos de textura sejam importados para ETC2/ASTC. Foi habilitada a configuração global `rendering/textures/vram_compression/import_etc2_astc=true` em `project.godot`. O workflow agora apaga somente `.godot/imported/` antes da importação para obrigar a Godot a recriar os recursos com a configuração atual; a documentação informa que mudar essa configuração não altera os arquivos já importados.
+
+O smoke test também reportou `Infinite loop detected` no Tween infinito da animação da logo de carregamento. A animação foi trocada por uma oscilação senoidal leve atualizada no `_process`, eliminando o Tween infinito em vez de silenciar o erro.
+
+A mensagem `cannot connect to daemon at tcp:5037: Connection refused` é uma mensagem do cliente ADB, não a causa do erro de exportação mostrada nesta execução: a falha fatal explícita é a validação ETC2/ASTC. O workflow não instala APK em aparelho, não executa `adb install` e não inicia emulador. A etapa de verificação agora garante que não seja introduzida uma chamada ADB de instalação/dispositivo no workflow.
+
+Versão do APK: `0.6.1` (version code `7`).
+
+
+### Evitar detecção de dispositivos ADB no CI
+
+O preset `Android ARM64` usa `runnable=false`, pois o workflow gera um APK para Artifact e não faz implantação com um clique. Na Godot 4.7.2, presets Android marcados como runnable iniciam a thread de verificação de dispositivos ADB; ao fechar o editor, `export/android/shutdown_adb_on_exit` também pode tentar executar `adb kill-server`. O workflow agora grava `export/android/shutdown_adb_on_exit=false` nas configurações do editor. O pacote `platform-tools` permanece instalado porque o caminho padrão do Android SDK deve conter `platform-tools/adb`, mas não há aparelho, emulador ou daemon ADB necessário para exportar o APK.
